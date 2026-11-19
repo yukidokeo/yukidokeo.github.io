@@ -1,14 +1,8 @@
-# 仓库里只放「0 °C」：主页、源码、头像、构建脚本。
-# 其余的（另外两版样稿、三版目录页、截图、X 主页截图等素材）只留在本地。
+# 网站就是 public/ 文件夹：里面的文件原样上线。
+# 其余的（另外两版样稿、三版目录页、截图、素材、本地的样稿构建脚本）只留在本地。
 /*
 !/.gitignore
 !/README.md
 !/wrangler.jsonc
-!/index.html
-!/build.py
-!/src/
-/src/*
-!/src/thaw.html
-!/assets/
-/assets/*
-!/assets/avatar.webp
+!/public/
+.DS_Store

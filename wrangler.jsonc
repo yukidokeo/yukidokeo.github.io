@@ -1,9 +1,9 @@
-// Cloudflare Workers 部署配置：构建命令把页面放进 dist/，这里把 dist/ 当静态网站发上去
+// Cloudflare Workers 部署配置：public/ 文件夹原样发上去，就是整个网站
 {
   // 要和 Cloudflare 控制台里的 Worker 名字一致
   "name": "yukidokeo",
   "compatibility_date": "2026-10-01",
   "assets": {
-    "directory": "./dist"
+    "directory": "./public"
   }
 }
