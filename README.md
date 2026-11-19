@@ -12,7 +12,8 @@
 `public/` 就是整个网站，里面的文件原样上线：
 
 - `public/index.html`：主页，直接改就行
-- `public/avatar.webp`：头像
+- `public/avatar.webp`：页面里的头像
+- `public/favicon.ico`、`icon-192.png`、`apple-touch-icon.png`：浏览器标签和手机主屏幕上的图标（圆形头像）
 - 想加图片之类的文件，放进 `public/` 就能用 `/文件名` 访问
 
 简介的文字画在 canvas 上，在 `index.html` 里搜 `function lines` 能找到；`<main class="sr">` 里还有一份给读屏软件读的，改的时候两处一起改。
