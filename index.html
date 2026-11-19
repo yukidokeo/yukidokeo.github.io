@@ -1,0 +1,1234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>雪解け</title>
+<style>
+/* 0 °C：一屏雪景。简介写在雪地里，0 °C 线以上积雪，线以下开花 */
+:root{
+  --sky:#a69dba;
+  --ink:#1d1b38;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--sky)}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+.lk{position:absolute;display:block;border-radius:4px;z-index:2}
+.lk:focus-visible{outline:2px solid #fff;outline-offset:2px}
+canvas{touch-action:pinch-zoom}
+#iso{position:absolute;left:0;right:0;height:30px;margin-top:-15px;pointer-events:none;z-index:1;outline:none}
+#iso:focus-visible{background:linear-gradient(transparent 13px,rgba(255,255,255,.18) 13px,rgba(255,255,255,.18) 17px,transparent 17px)}
+</style>
+</head>
+<body>
+<canvas id="c" aria-hidden="true"></canvas>
+<main class="sr">
+  <h1>雪解け</h1>
+  <p>˚‧₊· 雪がとけたら、なにになる？·₊‧˚</p>
+  <p>—— 春になる。</p>
+  <p>刚入圈 ┆ 雪雪 ┆ mtf 🏳️‍⚧️ ┆ 永远 14 岁</p>
+  <p>Vibe Coding 前端，听术力口，抱着鲨鲨睡觉</p>
+  <p>同类互fo，私信总会回的 ❄</p>
+</main>
+<nav id="links" aria-label="在别处找我"></nav>
+<div id="iso" role="slider" tabindex="0" aria-label="0 °C 线，跟着鼠标上下移动，也可以用方向键" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40"></div>
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const cv = $('#c'), ctx = cv.getContext('2d');
+const iso = $('#iso'), nav = $('#links');
+// 联系方式：画在 canvas 里的字只是外观，可点的是叠在上面的透明 <a>
+const LINKS = {
+  x: { href: 'https://x.com/yukidoke_o', label: '在 X 关注我（@yukidoke_o）' },
+  gh: { href: 'https://github.com/yukidokeo', label: '在 GitHub 上找我（yukidokeo）' },
+};
+// 两个图标（24×24 坐标），画在字里，跟字一样会积雪
+const ICON = {
+  x: new Path2D('M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z'),
+  gh: new Path2D('M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'),
+};
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const F_JP = '"Hiragino Maru Gothic ProN","Hiragino Maru Gothic Pro","Yu Gothic UI","Yu Gothic","Meiryo","Noto Sans CJK JP","Noto Sans JP",sans-serif';
+const F_CN = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Noto Sans SC",sans-serif';
+const F_MO = 'ui-monospace,"SF Mono",Menlo,Consolas,monospace';
+const INK_C = '29,27,56', INK_W = '64,30,62';
+const CAP = [0, 3, 6, 16, 6];            // 每种表面最多能积几层雪：字 / 头像 / 地面 / 鲨鲨
+const PETAL = new Path2D('M0 .55C-.55 .2-.47-.42-.13-.5L0-.35L.13-.5C.47-.42.55 .2 0 .55Z');
+const PCOL = [['#f6b3c1','#e597a8'],['#f3a2b4','#d98599'],['#f8c6d0','#e6a9b6'],['#fbdde4','#ecc0ca']];
+const NB = 8;                               // 草地按远近分几层画
+const SQ = 26;                              // 花的缓存图按开合进度分几档
+const LG = vnorm([-.42, -.74, .52]);        // 光从左上前方来
+const HAZE = hex('#aca3c2');                // 远处的花草往这个颜色褪
+function hex(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const mulc = (a, k) => [Math.min(255, a[0] * k), Math.min(255, a[1] * k), Math.min(255, a[2] * k)];
+const css = (c, al = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${al})`;
+const sm = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+// 花瓣轮廓：t 从花托到瓣尖，返回半宽
+const PROF = {
+  hep: t => Math.pow(Math.sin(Math.PI * (.05 + .95 * Math.pow(t, .85))), .62),
+  drop: t => Math.pow(Math.sin(Math.PI * (.05 + .95 * Math.pow(t, .72))), .7),
+  cro: t => Math.pow(Math.sin(Math.PI * (.06 + .94 * Math.pow(t, .62))), .55),
+  round: t => Math.pow(Math.sin(Math.PI * (.08 + .92 * t)), .5),
+  bract: t => Math.pow(Math.sin(Math.PI * (.1 + .9 * Math.pow(t, .8))), .55),
+};
+// 每种花瓣正面 f、背面 b 从花托到瓣尖的渐变
+const cs = (f0, f1, b0, b1) => ({ f: [[0, hex(f0)], [1, hex(f1)]], b: [[0, hex(b0)], [1, hex(b1)]] });
+const HEPC = [cs('#e98fab', '#fbd0dc', '#dca0b3', '#f1cfd9'), cs('#ece0ef', '#fffcfd', '#dcd2e4', '#f4eff6'), cs('#86a5e6', '#c3d8f8', '#9fb1e2', '#ccd8f2')];
+const SEPC = cs('#6f8b6f', '#90a98a', '#6a8468', '#8aa184');
+const DROPC = cs('#e3e7f0', '#ffffff', '#dde2ee', '#fbfcff');
+const DROPIN = { f: [[0, hex('#eef2ee')], [.5, hex('#f8fbf7')], [.76, hex('#86b386')], [1, hex('#a9caa4')]], b: [[0, hex('#e9eee9')], [.7, hex('#f4f7f3')], [1, hex('#c9dcc5')]] };
+const CROC = [{ ...cs('#8f78cc', '#cfc1f2', '#a08bd4', '#dcd1f5'), st: hex('#6b55a8') }, { ...cs('#dcd0f0', '#fdfbff', '#cfc1e8', '#f3eefb'), st: hex('#9a85cf') }];
+const VERC = cs('#5b8fdc', '#acd0f6', '#7fa4dc', '#b9d0ef'), VERL = cs('#b7cdf0', '#e5eefb', '#c2d2ee', '#e3ebf8');
+const FUKO = cs('#8eaa6f', '#cddb9d', '#94ad76', '#c0d197'), FUKI = cs('#b4c98b', '#e6ebb8', '#adc285', '#dbe3ad');
+const LEAF_D = hex('#4c6658'), LEAF_L = hex('#6e8a72');
+const G_DK = hex('#5b7868'), G_LT = hex('#88a590');
+
+const av = new Image();
+av.src = 'data:image/webp;base64,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';
+
+let W = 0, H = 0, DPR = 1, N = 0;
+let g, st, pos, list, cnt = 0, sc, sx, simg, sd, dirt;
+let L, gy, tC, tW, mC, mW, gC, gW, Y0 = 0, TY0 = 0, TY1 = 0;
+let lineY = 0, lineFrac = -1, aim = null, foc = false, touched = false, nudge = -1;   // aim：温度线要去的高度，null 就回到两句签名中间
+let T = 0, wind = 0, glintT = 0, hoverLk = null, vacc = 0;
+let fl = [], pe = [], dr = [], gl = [], fw = [], gs = [], BF = [], BG = [], GBC = [], sprBudget = 0;
+let PSPR = [], bloomSpr = null;
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = Math.max(1, h); return c; };
+
+// ── 1D 噪声，画山脊用 ──
+function h1(n) { n = (n << 13) ^ n; const t = (Math.imul(n, Math.imul(Math.imul(n, n), 15731) + 789221) + 1376312589) & 0x7fffffff; return 1 - t / 1073741824; }
+function vn(x) { const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return h1(i) * (1 - u) + h1(i + 1) * u; }
+function ridged(x, o0) { let s = 0, a = .62, fr = 1; for (let o = 0; o < 5; o++) { s += a * (1 - Math.abs(vn(x * fr + o * 17.3 + o0))); a *= .48; fr *= 2.13; } return s; }
+
+// ── 排版：全部画在 canvas 上，字形同时就是积雪的碰撞体 ──
+function lines(s) {
+  const jp = (px, w = 400) => `${w} ${px * s}px ${F_JP}`;
+  const cn = px => `400 ${px * s}px ${F_CN}`;
+  const mo = px => `400 ${px * s}px ${F_MO}`;
+  const sep = { t: '  ┆  ', f: cn(15), mut: .38 };
+  return {
+    name: [{ t: '雪解け', f: jp(23, 600) }],
+    hand: [{ t: '@yukidoke_o', f: mo(12.5), mut: .6, lk: 'x', px: 12.5 }],
+    A: [{ t: '˚‧₊· ', f: jp(17), mut: .5 }, { t: '雪がとけたら、なにになる？', f: jp(19) }, { t: ' ·₊‧˚', f: jp(17), mut: .5 }],
+    B: [{ t: '—— ', f: cn(19), mut: .8 }, { t: '春になる。', f: jp(19) }],
+    C: [{ t: '刚入圈', f: cn(15) }, sep, { t: '雪雪', f: cn(15) }, sep, { t: 'mtf ', f: cn(15) }, { flag: 1 }, sep, { t: '永远 14 岁', f: cn(15) }],
+    D: [{ t: 'Vibe Coding 前端，听术力口，抱着鲨鲨睡觉', f: cn(15) }],
+    E: [{ t: '同类互fo，私信总会回的 ', f: cn(15) }, { flake: 1 }],
+    F: [{ t: '在 ', f: cn(15), mut: .72, lk: 'x', px: 15 }, { icon: 'x', lk: 'x', px: 15 }, { t: ' 关注我！', f: cn(15), mut: .72, lk: 'x', px: 15 }, { t: ' ┆  ', f: cn(15), mut: .38 },   // 全角！自带右边空白，左边少一个空格才对称
+        { t: '在 ', f: cn(15), mut: .72, lk: 'gh', px: 15 }, { icon: 'gh', lk: 'gh', px: 15 }, { t: ' 上找我！', f: cn(15), mut: .72, lk: 'gh', px: 15 }],
+  };
+}
+function measure(m, runs, s) {
+  let w = 0;
+  for (const r of runs) {
+    if (r.t !== undefined) { m.font = r.f; r.w = m.measureText(r.t).width; }
+    else r.w = r.flag ? 19 * s : r.icon ? 15 * s : 14 * s;
+    w += r.w;
+  }
+  return w;
+}
+function layout() {
+  const m = mk(1, 1).getContext('2d');
+  let s = 1, ls = lines(1);
+  const keys = ['A', 'B', 'C', 'D', 'E', 'F'];
+  let mw = Math.max(...keys.map(k => measure(m, ls[k], 1)));
+  const avail = W - 32;
+  if (mw > avail) { s = Math.max(.74, avail / mw); ls = lines(s); mw = Math.max(...keys.map(k => measure(m, ls[k], s))); }
+  measure(m, ls.name, s); measure(m, ls.hand, s);
+  const groundTop = Math.round(H - clamp(H * .15, 70, 140));
+  const blockH = 330 * s;
+  const left = W < 700 ? 16 : Math.round(clamp(W * .5 - mw * .5 - W * .08, 40, W - mw - 40));
+  const top = Math.round(clamp((groundTop - blockH) * .42, 28, groundTop - blockH - 20));
+  const avR = 30 * s;
+  const o = { s, left, top, bw: mw, groundTop, lines: ls };
+  o.av = { x: left + avR, y: top + avR, r: avR };
+  const nx = left + avR * 2 + 16 * s;
+  o.pos = {
+    name: [nx, top + avR - 3 * s],
+    hand: [nx, top + avR + 17 * s],
+  };
+  const yA = top + avR * 2 + 50 * s;
+  const yB = yA + 64 * s, yC = yB + 46 * s, yD = yC + 30 * s, yE = yD + 30 * s, yF = yE + 42 * s;
+  Object.assign(o.pos, { A: [left, yA], B: [left, yB], C: [left, yC], D: [left, yD], E: [left, yE], F: [left, yF] });
+  o.lineDefault = Math.round((yA + 6 * s + yB - 18 * s) / 2);
+  o.bottom = yF + 10 * s;
+  o.labelX = W < 700 ? W - 16 - 34 : Math.min(W - 60, left + mw + 44);
+  // 每个链接的可点范围：同一行里同一个 lk 的字连成一块
+  o.links = [];
+  for (const k of ['hand', 'F']) {
+    let x = o.pos[k][0]; const y = o.pos[k][1];
+    for (const r of ls[k]) {
+      if (r.lk) {
+        const last = o.links[o.links.length - 1], fs = r.px * s;
+        if (last && last.k === k && last.lk === r.lk) last.x1 = x + r.w;
+        else o.links.push({ k, lk: r.lk, x0: x, x1: x + r.w, base: y, y0: y - fs * 1.05, y1: y + fs * .4 });
+      }
+      x += r.w;
+    }
+  }
+  // 行尾 ❄ 的位置
+  let x = left; for (const r of ls.E) { if (r.flake) o.flk = { x: x + 7 * s, y: yE - 5.5 * s, s }; x += r.w; }
+  o.shark = {
+    k: clamp(W / 1100, .62, .95),
+    x: W < 700 ? W - 78 : Math.min(W - 90, left + mw + 120),
+  };
+  return o;
+}
+
+function drawFlag(c, x, y, s, mask) {
+  const w = 16 * s, h = 11 * s, t = y - 11.5 * s;
+  if (mask) { c.fillRect(x, t, w, h); return; }
+  const cols = ['#5bcefa', '#f5a9b8', '#ffffff', '#f5a9b8', '#5bcefa'];
+  c.save(); c.beginPath(); c.roundRect ? c.roundRect(x, t, w, h, 1.6 * s) : c.rect(x, t, w, h); c.clip();
+  cols.forEach((cl, i) => { c.fillStyle = cl; c.fillRect(x, t + i * h / 5, w, h / 5 + .5); });
+  c.restore();
+}
+function drawText(c, ink, mask) {
+  c.textBaseline = 'alphabetic';
+  for (const k of ['name', 'hand', 'A', 'B', 'C', 'D', 'E', 'F']) {
+    let [x, y] = L.pos[k];
+    for (const r of L.lines[k]) {
+      if (r.t !== undefined) {
+        c.font = r.f;
+        if (!mask) c.fillStyle = `rgba(${ink},${r.mut || 1})`;
+        c.fillText(r.t, x, y);
+      } else if (r.flag) drawFlag(c, x + 1.5 * L.s, y, L.s, mask);
+      else if (r.icon) {
+        // 图标和汉字的字身对齐：底边略低于基线，高度约一个字
+        const k = 13.5 * L.s / 24;
+        if (!mask) c.fillStyle = `rgba(${ink},${r.mut || 1})`;
+        c.save(); c.translate(x + .75 * L.s, y - 12 * L.s); c.scale(k, k); c.fill(ICON[r.icon]); c.restore();
+      }
+      x += r.w;
+    }
+  }
+}
+
+// ── 鲨鲨（朝左趴着，原点在肚皮底部中心） ──
+function sharkBody(c) {
+  c.beginPath();
+  c.moveTo(-52, -11);
+  c.bezierCurveTo(-49, -24, -30, -29, -8, -29);
+  c.bezierCurveTo(12, -29, 28, -24, 40, -15);
+  c.bezierCurveTo(45, -20, 50, -27, 57, -33);
+  c.bezierCurveTo(56, -24, 53, -15, 50, -10);
+  c.bezierCurveTo(53, -6, 56, -2, 58, .5);
+  c.bezierCurveTo(52, -1, 46, -4, 40, -7);
+  c.bezierCurveTo(28, -1, 10, .8, -12, .6);
+  c.bezierCurveTo(-34, .4, -50, -3, -52, -11);
+  c.closePath();
+}
+function sharkDorsal(c) { c.beginPath(); c.moveTo(-11, -28.5); c.bezierCurveTo(-6, -35, -1, -42, 6, -44); c.bezierCurveTo(5, -38, 6, -32, 10, -28); c.closePath(); }
+function sharkPec(c) { c.beginPath(); c.moveTo(-27, -7); c.bezierCurveTo(-21, -1, -12, 1.5, -2, 1.2); c.bezierCurveTo(-8, -3, -11, -7, -13, -11); c.closePath(); }
+function sharkSolid(c) { sharkBody(c); c.fill(); sharkDorsal(c); c.fill(); }
+function sharkXform(c) {
+  const sk = L.shark, x = sk.x, y = gy[clamp(x | 0, 0, W - 1)] + 1.5;
+  c.translate(x, y); c.scale(sk.k, sk.k);
+}
+function drawShark(c) {
+  c.save(); sharkXform(c);
+  const gr = c.createLinearGradient(0, -44, 0, 2);
+  gr.addColorStop(0, '#6683a8'); gr.addColorStop(.7, '#86a1c2'); gr.addColorStop(1, '#93acc9');
+  c.fillStyle = gr; sharkDorsal(c); c.fill(); sharkBody(c); c.fill();
+  c.save(); sharkBody(c); c.clip();
+  c.fillStyle = '#f4f0f3';
+  c.beginPath(); c.moveTo(-60, -8); c.bezierCurveTo(-34, -5.5, 8, -4.5, 44, -9.5); c.lineTo(64, 6); c.lineTo(-60, 6); c.closePath(); c.fill();
+  c.fillStyle = 'rgba(60,70,110,.10)'; c.fillRect(-60, -2, 130, 4);
+  c.restore();
+  c.fillStyle = '#7b96b9'; sharkPec(c); c.fill();
+  c.fillStyle = '#252536'; c.beginPath(); c.arc(-37, -17.5, 1.8, 0, 7); c.fill();
+  c.fillStyle = 'rgba(255,255,255,.8)'; c.beginPath(); c.arc(-37.6, -18.2, .6, 0, 7); c.fill();
+  c.strokeStyle = 'rgba(40,40,64,.55)'; c.lineWidth = .9; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(-47.5, -6.8); c.quadraticCurveTo(-42, -5.2, -37, -6.6); c.stroke();
+  c.restore();
+}
+
+// ── 积雪网格：0 空 / 1 实体 / 2 雪 ──
+function paint(i) {
+  const o = i * 4, top = i < W || g[i - W] !== 2;
+  if (top) { sd[o] = 255; sd[o + 1] = 255; sd[o + 2] = 255; }
+  else { sd[o] = 224; sd[o + 1] = 228; sd[o + 2] = 244; }
+  sd[o + 3] = 255; mark(i);
+}
+function mark(i) {
+  const x = i % W, y = (i / W) | 0;
+  if (x < dirt[0]) dirt[0] = x; if (y < dirt[1]) dirt[1] = y;
+  if (x > dirt[2]) dirt[2] = x; if (y > dirt[3]) dirt[3] = y;
+}
+function addSnow(i) { g[i] = 2; pos[i] = cnt; list[cnt++] = i; paint(i); if (g[i + W] === 2) paint(i + W); }
+function delSnow(i) {
+  g[i] = 0; const k = pos[i], last = list[--cnt]; list[k] = last; pos[last] = k; pos[i] = -1;
+  sd[i * 4 + 3] = 0; mark(i);
+  if (g[i + W] === 2) paint(i + W);
+}
+function depthOK(x, y) {
+  let d = 0, yy = y + 1;
+  while (yy < H && g[yy * W + x] === 2) { d++; yy++; }
+  if (yy >= H) return false;
+  return d < CAP[st[yy * W + x]];
+}
+
+function build() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight; N = W * H;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  L = layout();
+  // 地面起伏
+  gy = new Float32Array(W);
+  for (let x = 0; x < W; x++) gy[x] = L.groundTop + 6 * Math.sin(x * .0041 + 1.3) + 3 * Math.sin(x * .011 + .4) + 1.6 * Math.sin(x * .027);
+  if (lineFrac < 0) lineY = L.lineDefault; else lineY = clamp(lineFrac * H, 24, H - 26);
+
+  g = new Uint8Array(N); st = new Uint8Array(N); pos = new Int32Array(N).fill(-1); list = new Int32Array(N); cnt = 0;
+  sc = mk(W, H); sx = sc.getContext('2d'); simg = sx.createImageData(W, H); sd = simg.data;
+  dirt = [W, H, -1, -1];
+
+  // 碰撞体：字、头像、鲨鲨、地面，各用一种颜色画，读回来分类型
+  const mc = mk(W, H), m = mc.getContext('2d');
+  m.fillStyle = '#f00'; drawText(m, '', true);
+  m.fillStyle = '#0f0'; m.beginPath(); m.arc(L.av.x, L.av.y, L.av.r + 2, 0, 7); m.fill();
+  m.fillStyle = '#ff0'; m.save(); sharkXform(m); sharkSolid(m); m.restore();
+  m.fillStyle = '#00f'; m.beginPath(); m.moveTo(0, H); for (let x = 0; x < W; x++) m.lineTo(x + .5, gy[x]); m.lineTo(W, H); m.closePath(); m.fill();
+  const d = m.getImageData(0, 0, W, H).data;
+  for (let i = 0; i < N; i++) {
+    const o = i * 4;
+    if (d[o + 3] > 50) { g[i] = 1; const r = d[o] > 120, gg = d[o + 1] > 120; st[i] = r && gg ? 4 : r ? 1 : gg ? 2 : 3; }
+  }
+
+  buildLayers();
+  bloomSpr = blossom(L.s);
+  seedFlora();
+  spawnAll();
+  prewarm();
+  placeIso();
+  nav.textContent = ''; hoverLk = null;
+  for (const l of L.links) {
+    const a = document.createElement('a'), d = LINKS[l.lk];
+    a.className = 'lk'; a.href = d.href; a.target = '_blank'; a.rel = 'noopener me'; a.setAttribute('aria-label', d.label);
+    Object.assign(a.style, { left: l.x0 - 4 + 'px', top: l.y0 - 3 + 'px', width: l.x1 - l.x0 + 8 + 'px', height: l.y1 - l.y0 + 6 + 'px' });
+    const on = () => hoverLk = l, off = () => { if (hoverLk === l) hoverLk = null; };
+    a.addEventListener('pointerenter', on); a.addEventListener('pointerleave', off);
+    a.addEventListener('focus', on); a.addEventListener('blur', off);
+    nav.appendChild(a);
+  }
+}
+
+function buildLayers() {
+  // 文字两份：冷色墨（线上）和暖色墨（线下）
+  TY0 = Math.max(0, Math.floor(L.top - 30)); TY1 = Math.min(H, Math.ceil(L.bottom + 20));
+  const th = TY1 - TY0;
+  tC = mk(W * DPR, th * DPR); tW = mk(W * DPR, th * DPR);
+  for (const [c, ink] of [[tC, INK_C], [tW, INK_W]]) {
+    const x = c.getContext('2d'); x.setTransform(DPR, 0, 0, DPR, 0, -TY0 * DPR); drawText(x, ink, false);
+  }
+  // 远山两层，线上有雪、线下是裸岩
+  Y0 = Math.floor(L.groundTop - Math.min(H * .26, 240));
+  const hh = H - Y0;
+  mC = mk(W * DPR, hh * DPR); mW = mk(W * DPR, hh * DPR);
+  gC = mk(W * DPR, hh * DPR); gW = mk(W * DPR, hh * DPR);
+  const rid = [
+    { amp: Math.min(H * .2, 190), sc: 330, o: 3.1, base: L.groundTop + 4, a: .55 },
+    { amp: Math.min(H * .11, 105), sc: 210, o: 9.7, base: L.groundTop + 8, a: .9 },
+  ];
+  for (const [c, cold] of [[mC, 1], [mW, 0]]) {
+    const x = c.getContext('2d'); x.setTransform(DPR, 0, 0, DPR, 0, -Y0 * DPR);
+    for (const r of rid) {
+      const ys = new Float32Array(W + 1);
+      for (let i = 0; i <= W; i++) ys[i] = r.base - r.amp * Math.pow(ridged(i / r.sc, r.o) / 1.2, 2.4);
+      const top = r.base - r.amp;
+      const gr = x.createLinearGradient(0, top, 0, r.base);
+      if (cold) { gr.addColorStop(0, `rgba(242,238,247,${r.a})`); gr.addColorStop(.45, `rgba(204,196,220,${r.a})`); gr.addColorStop(1, `rgba(150,142,178,${r.a})`); }
+      else { gr.addColorStop(0, `rgba(128,120,158,${r.a})`); gr.addColorStop(1, `rgba(152,140,176,${r.a})`); }
+      x.fillStyle = gr; x.beginPath(); x.moveTo(0, H);
+      for (let i = 0; i <= W; i++) x.lineTo(i, ys[i]);
+      x.lineTo(W, H); x.closePath(); x.fill();
+      x.strokeStyle = cold ? `rgba(255,255,255,${r.a * .7})` : `rgba(226,214,232,${r.a * .45})`; x.lineWidth = .8;
+      x.beginPath(); for (let i = 0; i <= W; i++) i ? x.lineTo(i, ys[i]) : x.moveTo(i, ys[i]); x.stroke();
+    }
+  }
+  for (const [c, cold] of [[gC, 1], [gW, 0]]) {
+    const x = c.getContext('2d'); x.setTransform(DPR, 0, 0, DPR, 0, -Y0 * DPR);
+    const gr = x.createLinearGradient(0, L.groundTop - 8, 0, H);
+    if (cold) { gr.addColorStop(0, '#ebe8f5'); gr.addColorStop(1, '#c7c3dc'); }
+    else { gr.addColorStop(0, '#9a93b4'); gr.addColorStop(.3, '#8b8ba7'); gr.addColorStop(1, '#747b96'); }
+    x.fillStyle = gr; x.beginPath(); x.moveTo(0, H);
+    for (let i = 0; i < W; i++) x.lineTo(i + .5, gy[i]);
+    x.lineTo(W, H); x.closePath(); x.fill();
+    if (!cold) {
+      // 草地上深浅不一的斑块，远处扁、近处大
+      x.save(); x.clip();
+      for (let i = 0, n = Math.round(W / 16); i < n; i++) {
+        const px = rnd(0, W), z = Math.pow(Math.random(), 1.2), g0 = gy[px | 0], py = g0 + 2 + z * (H - g0), r = (12 + 46 * z) * rnd(.6, 1.4);
+        const col = Math.random() < .62 ? '84,108,100' : '178,168,204', a = rnd(.07, .15);
+        x.save(); x.translate(px, py); x.scale(1, .26);
+        const rg = x.createRadialGradient(0, 0, 0, 0, 0, r);
+        rg.addColorStop(0, `rgba(${col},${a})`); rg.addColorStop(1, `rgba(${col},0)`);
+        x.fillStyle = rg; x.beginPath(); x.arc(0, 0, r, 0, 7); x.fill(); x.restore();
+      }
+      // 草皮：很密的短草，远处细碎、近处长；静态的，会动的高草另外画
+      const NBT = 10, tones = [G_DK, mixc(G_DK, G_LT, .5), G_LT], P = [];
+      for (let i = 0; i < NBT * 3; i++) P.push(new Path2D());
+      for (let i = 0, n = Math.round(W * (H - L.groundTop) / 6); i < n; i++) {
+        const x0 = Math.random() * W, z = Math.pow(Math.random(), 1.15), g0 = gy[x0 | 0], y0 = g0 + 1 + z * (H - g0 + 4);
+        const s = .78 + 1.05 * z, h = rnd(1.4, 4.6) * s, w = rnd(.3, .55) * s, a = rnd(-.6, .6), sa = Math.sin(a) * h;
+        const p = P[Math.min(NBT - 1, (z * NBT) | 0) * 3 + ((Math.random() * 3) | 0)];
+        p.moveTo(x0 - w, y0); p.quadraticCurveTo(x0 + sa * .3 - w * .3, y0 - h * .6, x0 + sa, y0 - Math.cos(a) * h);
+        p.quadraticCurveTo(x0 + sa * .3 + w * .3, y0 - h * .6, x0 + w, y0);
+      }
+      for (let b = 0; b < NBT; b++) for (let t = 0; t < 3; t++) {
+        x.fillStyle = css(mixc(tones[t], HAZE, .5 * (1 - (b + .5) / NBT) + .1), .8); x.fill(P[b * 3 + t]);
+      }
+      // 远处星星点点的小花
+      for (const [c, n] of [['#f3b6c6', W / 10], ['#f6f1f6', W / 12], ['#a9c3ef', W / 12]]) {
+        x.fillStyle = css(mixc(hex(c), HAZE, .3)); x.beginPath();
+        for (let i = 0; i < n; i++) { const px = rnd(0, W), z = Math.pow(Math.random(), 2) * .45, py = gy[px | 0] + 1 + z * (H - gy[px | 0]), r = (.45 + .5 * Math.random()) * (.78 + 1.05 * z); x.moveTo(px + r, py); x.arc(px, py, r, 0, 7); }
+        x.fill();
+      }
+      x.restore();
+    }
+    x.strokeStyle = cold ? 'rgba(255,255,255,.9)' : 'rgba(214,204,226,.5)'; x.lineWidth = 1;
+    x.beginPath(); for (let i = 0; i < W; i++) i ? x.lineTo(i + .5, gy[i]) : x.moveTo(.5, gy[0]); x.stroke();
+  }
+}
+
+// ── 春天的草地 ──
+// 雪割草（粉 / 白 / 蓝）、雪滴花、番红花、阿拉伯婆婆纳、蜂斗菜芽，再加草丛，按远近铺满地面。
+// 花头是三维的：每片花瓣有自己的朝向、开合角和卷曲，正交投影后按法线打光、按前后排序，
+// 画进这株花自己的小缓存图；只有开合进度变了才重画。
+function vadd(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function vmul(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function vdot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function vcross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function vnorm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }
+function basis(a) { const u = vnorm(vcross(a, Math.abs(a[2]) < .9 ? [0, 0, 1] : [1, 0, 0])); return [u, vcross(a, u)]; }
+function ring(u, v, al) { return vadd(vmul(u, Math.cos(al)), vmul(v, Math.sin(al))); }
+// 朝向：phi 是离开竖直向上的角度，psi 绕竖轴转（0 = 正对观者）。屏幕 y 向下，z 朝观者
+function axis(phi, psi) { return vnorm([Math.sin(phi) * Math.sin(psi), -Math.cos(phi), Math.sin(phi) * Math.cos(psi)]); }
+
+// 一片花瓣：从花托沿 d 伸出，和花面夹角 th（π/2 就是合拢），curl 让瓣尖继续往里（正）或往外（负）卷，cup 是两边往里兜
+function petal(a, d, o) {
+  const wd = vcross(a, d), K = 7, Lp = [], Rp = [], sp = [];
+  let P = vadd(vmul(d, o.r0 || 0), vmul(a, o.h0 || 0)), n = a, zs = 0;
+  for (let k = 0; k <= K; k++) {
+    const t = k / K, th = o.th + (o.curl || 0) * t;
+    const dir = vadd(vmul(d, Math.cos(th)), vmul(a, Math.sin(th)));
+    const nIn = vcross(dir, wd), hw = o.w * o.prof(t), lift = vmul(nIn, (o.cup || 0) * hw);
+    Lp.push(vadd(vadd(P, vmul(wd, hw)), lift));
+    Rp.push(vadd(vadd(P, vmul(wd, -hw)), lift));
+    sp.push(P); zs += P[2];
+    if (k === 3) n = nIn;
+    if (k < K) P = vadd(P, vmul(dir, o.L / K));
+  }
+  return { pts: Lp.concat(Rp.reverse()), sp, z: zs / (K + 1), n };
+}
+function smooth(x, P) {
+  const n = P.length;
+  x.beginPath(); x.moveTo((P[n - 1][0] + P[0][0]) / 2, (P[n - 1][1] + P[0][1]) / 2);
+  for (let i = 0; i < n; i++) { const a = P[i], b = P[(i + 1) % n]; x.quadraticCurveTo(a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); }
+  x.closePath();
+}
+function paintPetal(x, pt, C, hz, lw) {
+  const front = pt.n[2] >= 0, n = front ? pt.n : vmul(pt.n, -1), l = vdot(n, LG);
+  const k = .74 + .34 * Math.max(0, l) + .16 * Math.max(0, -l);   // 背光那面透一点光
+  const stops = front ? C.f : C.b;
+  smooth(x, pt.pts);
+  if (lw <= 0) {   // 远处很小的花瓣：单色，不描边
+    x.fillStyle = css(mixc(mulc(mixc(stops[0][1], stops[stops.length - 1][1], .6), k), HAZE, hz)); x.fill();
+    return front;
+  }
+  const b = pt.sp[0], e = pt.sp[pt.sp.length - 1], gr = x.createLinearGradient(b[0], b[1], e[0] + .01, e[1] + .01);
+  for (const [t, c] of stops) gr.addColorStop(t, css(mixc(mulc(c, k), HAZE, hz)));
+  x.fillStyle = gr; x.fill();
+  x.strokeStyle = css(mixc(mulc(stops[0][1], k * .8), HAZE, hz), .4); x.lineWidth = lw; x.stroke();
+  return front;
+}
+function drawItems(x, it, hz, lw) {
+  it.sort((A, B) => A.z - B.z);
+  for (const o of it) {
+    if (o.fn) { o.fn(); continue; }
+    const front = paintPetal(x, o.pt, o.C, hz, lw);
+    if (o.after) o.after(front);
+  }
+}
+function dots(x, pts, r, col) {
+  x.fillStyle = col; x.beginPath();
+  for (const P of pts) { x.moveTo(P[0] + r, P[1]); x.arc(P[0], P[1], r, 0, 6.2832); }
+  x.fill();
+}
+
+// 雪割草：6~8 片花被，下面三片绿萼，中间一圈奶白雄蕊。花苞时低着头，开的时候抬起来
+function headHep(x, p, g) {
+  const budK = sm(.22, .62, g), openK = sm(.5, 1, g); if (budK <= 0) return;
+  const s = p.s, a = axis(lerp(2, p.phi, sm(0, .7, openK)), p.psi), [u, v] = basis(a);
+  const L = p.pl * (.4 + .6 * budK), th = lerp(1.36, .14, openK), curl = lerp(.1, .32, openK), it = [];
+  if (a[2] < .55 || openK < .6) for (let i = 0; i < 3; i++) {   // 正对着看时萼片全被挡住，不画
+    const pt = petal(a, ring(u, v, p.r0 + .5 + i * 2.0944), { r0: .2 * s, h0: -.3 * s, L: L * .42, w: L * .2, th: lerp(1.2, .45, openK), curl: .15, cup: .25, prof: PROF.hep });
+    it.push({ z: pt.z, pt, C: SEPC });
+  }
+  for (let i = 0; i < p.n; i++) {
+    const pt = petal(a, ring(u, v, p.r0 + i * 6.2832 / p.n + p.jt[i]), { r0: .3 * s, L: L * p.lj[i], w: L * .27, th: th + p.tj[i] * openK, curl, cup: .3, prof: PROF.hep });
+    it.push({ z: pt.z, pt, C: HEPC[p.col] });
+  }
+  if (openK > .15) it.push({ z: a[2] * .2 * L + .01, fn: () => {
+    const st = [], pi = [];
+    for (let i = 0; i < 16; i++) {
+      const r = (.12 + .2 * Math.sqrt((i + .5) / 16)) * L, h = (.14 + .08 * ((i * .618) % 1)) * L * openK;
+      st.push(vadd(vmul(ring(u, v, i * 2.39996), r), vmul(a, h)));
+    }
+    for (let i = 0; i < 5; i++) pi.push(vadd(vmul(ring(u, v, i * 1.2566), .06 * L), vmul(a, .13 * L * openK)));
+    dots(x, st, .32 * s, css(mixc(hex('#fff7ea'), HAZE, p.hz)));
+    dots(x, pi, .26 * s, css(mixc(hex('#c9dfbf'), HAZE, p.hz)));
+  } });
+  drawItems(x, it, p.hz, s < 1.05 ? 0 : .22 * s);
+}
+// 雪滴花：低垂的白铃铛，三片长外瓣张开，里面三片短的瓣尖带绿斑，顶上一颗绿子房
+function headDrop(x, p, g) {
+  const budK = sm(.22, .62, g), openK = sm(.5, 1, g); if (budK <= 0) return;
+  const s = p.s, a = vnorm([p.side * .3 + p.psi * .15, 1, .35]), [u, v] = basis(a);
+  const L = p.pl * (.45 + .55 * budK), th = lerp(1.47, .72, openK), curl = lerp(.02, .45, openK), it = [];
+  for (let i = 0; i < 3; i++) {
+    const al = p.r0 + i * 2.0944;
+    let pt = petal(a, ring(u, v, al), { r0: .22 * s, h0: .25 * s, L, w: L * .3, th, curl, cup: .45, prof: PROF.drop });
+    it.push({ z: pt.z, pt, C: DROPC });
+    pt = petal(a, ring(u, v, al + 1.0472), { r0: .18 * s, h0: .25 * s, L: L * .56, w: L * .21, th: 1.36, curl: -.12, cup: .5, prof: PROF.drop });
+    it.push({ z: pt.z, pt, C: DROPIN });
+  }
+  drawItems(x, it, p.hz, s < 1.05 ? 0 : .2 * s);
+  const o = vmul(a, -.5 * s), k = .6 + .4 * budK;
+  const gr = x.createRadialGradient(o[0] - .3 * s, o[1] - .3 * s, 0, o[0], o[1], 1.1 * s);
+  gr.addColorStop(0, css(mixc(hex('#a9c6a2'), HAZE, p.hz))); gr.addColorStop(1, css(mixc(hex('#76997a'), HAZE, p.hz)));
+  x.fillStyle = gr; x.beginPath(); x.ellipse(o[0], o[1], .95 * s * k, .78 * s * k, Math.atan2(a[1], a[0]), 0, 6.2832); x.fill();
+}
+// 番红花：六片花被围成高脚杯，外轮背面有深色条纹，中间橙色柱头
+function headCro(x, p, g) {
+  const budK = sm(.2, .6, g), openK = sm(.5, 1, g); if (budK <= 0) return;
+  const s = p.s, a = axis(p.phi, p.psi), [u, v] = basis(a), C = CROC[p.col];
+  const L = p.pl * (.45 + .55 * budK), th = lerp(1.44, p.tho, openK), curl = lerp(.06, -.24, openK), it = [];
+  for (let i = 0; i < 6; i++) {
+    const out = !(i & 1);
+    const pt = petal(a, ring(u, v, p.r0 + i * 1.0472), { r0: .22 * s, L: L * (out ? 1 : .9), w: L * (out ? .3 : .27), th: th + (out ? 0 : .06), curl, cup: .35, prof: PROF.cro });
+    it.push({ z: pt.z, pt, C, after: front => {
+      const sp = pt.sp;
+      x.strokeStyle = css(mixc(C.st, HAZE, p.hz), front ? .28 : .5); x.lineWidth = .26 * s;
+      x.beginPath(); x.moveTo(sp[1][0], sp[1][1]); for (let j = 2; j < 6; j++) x.lineTo(sp[j][0], sp[j][1]); x.stroke();
+    } });
+  }
+  if (openK > .3) it.push({ z: a[2] * .45 * L + .01, fn: () => {
+    const c = vmul(a, .42 * L), pts = [0, 1, 2].map(j => vadd(c, vmul(ring(u, v, p.r0 + j * 2.0944), .09 * L)));
+    dots(x, pts, .36 * s, css(mixc(hex('#ef9f4c'), HAZE, p.hz)));
+  } });
+  drawItems(x, it, p.hz, s < 1.05 ? 0 : .22 * s);
+}
+
+function leafTri(x, cx, cy, r, ang, sq, c0, c1, hz, s) {
+  // 雪割草的叶子：三浅裂，基部凹进去接叶柄，平躺在地上所以压扁
+  x.save(); x.translate(cx, cy); x.scale(1, sq); x.rotate(ang);
+  x.beginPath();
+  for (let i = 0; i <= 42; i++) { const t = i / 42 * 6.2832, rr = r * (.72 + .28 * Math.cos(3 * t)); i ? x.lineTo(Math.cos(t) * rr, Math.sin(t) * rr) : x.moveTo(rr, 0); }
+  x.closePath();
+  const gr = x.createRadialGradient(-r * .2, 0, 0, 0, 0, r);
+  gr.addColorStop(0, css(mixc(c1, HAZE, hz))); gr.addColorStop(1, css(mixc(c0, HAZE, hz)));
+  x.fillStyle = gr; x.fill();
+  x.strokeStyle = css(mixc(c1, HAZE, hz), .5); x.lineWidth = .22 * s;
+  x.beginPath();
+  for (const t of [0, 2.0944, -2.0944]) { x.moveTo(-r * .4, 0); x.lineTo(Math.cos(t) * r * .78, Math.sin(t) * r * .78); }
+  x.stroke(); x.restore();
+}
+function strap(x, bx, h, w, bend, c0, c1, hz, mid) {
+  // 带状叶：从根部往上拱，再往一边弯
+  const tx = bx + bend * h, ty = -h * (1 - .3 * bend * bend), cx = bx + bend * h * .15, cy = ty * .8;
+  const gr = x.createLinearGradient(0, 0, 0, ty - .01);
+  gr.addColorStop(0, css(mixc(c0, HAZE, hz))); gr.addColorStop(1, css(mixc(c1, HAZE, hz)));
+  x.fillStyle = gr; x.beginPath(); x.moveTo(bx - w, 0);
+  x.quadraticCurveTo(cx - w * .7, cy, tx, ty); x.quadraticCurveTo(cx + w * .7, cy, bx + w, 0);
+  x.closePath(); x.fill();
+  if (mid) {
+    x.strokeStyle = css(mixc(mid, HAZE, hz), .55); x.lineWidth = w * .35;
+    x.beginPath(); x.moveTo(bx, 0); x.quadraticCurveTo(cx, cy, bx + (tx - bx) * .85, ty * .88); x.stroke();
+  }
+}
+function baseHep(x, p, g) {
+  const k = sm(.04, .5, g); if (k <= 0) return;
+  const s = p.s, pc = css(mixc(hex('#76686d'), HAZE, p.hz));
+  for (const lf of p.lv) {
+    const ca = Math.cos(lf.a), sa = Math.sin(lf.a), len = lf.len * s * k, r = lf.r * s * k;
+    const ex = ca * len, ey = sa * len * lf.sq - .6 * s * k;
+    x.strokeStyle = pc; x.lineWidth = .4 * s;
+    x.beginPath(); x.moveTo(0, 0); x.quadraticCurveTo(ex * .35, ey - 1.6 * s * k, ex, ey); x.stroke();
+    leafTri(x, ex + ca * r * .44, ey + sa * r * .44 * lf.sq, r, lf.a, lf.sq, LEAF_D, LEAF_L, p.hz, s);
+  }
+}
+function baseDrop(x, p, g) {
+  const k = sm(.04, .5, g); if (k <= 0) return;
+  for (const lf of p.lv) strap(x, lf.dx * p.s, p.h * lf.hk * k, .55 * p.s, lf.bend, hex('#6a8a7e'), hex('#9cb5a8'), p.hz);
+}
+function baseCro(x, p, g) {
+  const k = sm(.04, .5, g); if (k <= 0) return;
+  const lh = p.h + p.pl;
+  for (const lf of p.lv) strap(x, lf.dx * p.s, lh * lf.hk * k, .36 * p.s, lf.bend, hex('#4c6a56'), hex('#6f8c71'), p.hz, hex('#dfe9dc'));
+}
+// 阿拉伯婆婆纳（オオイヌノフグリ）：贴地的一小片，叶子圆，花四瓣、天蓝色，下面那片小一点、颜色浅一点
+function baseVer(x, p, g) {
+  const k = sm(.04, .5, g), budK = sm(.2, .6, g), openK = sm(.45, 1, g); if (k <= 0) return;
+  const s = p.s, P0 = new Path2D(), P1 = new Path2D();
+  for (const lf of p.lv) {
+    // 小圆叶：一层深色，左上角叠一块浅色当受光面
+    const r = lf.r * s * k, cx = lf.x * s * (.6 + .4 * k), cy = lf.y * s;
+    P0.ellipse(cx, cy, r, r * .62, lf.rot, 0, 6.2832);
+    P1.moveTo(cx - r * .2, cy - r * .12); P1.ellipse(cx - r * .2, cy - r * .12, r * .62, r * .36, lf.rot, 0, 6.2832);
+  }
+  x.fillStyle = css(mixc(hex('#4b6853'), HAZE, p.hz)); x.fill(P0);
+  x.fillStyle = css(mixc(hex('#6f8e6c'), HAZE, p.hz)); x.fill(P1);
+  if (budK <= 0) return;
+  x.strokeStyle = css(mixc(hex('#6d8868'), HAZE, p.hz)); x.lineWidth = .3 * s; x.beginPath();
+  for (const f of p.fl) { x.moveTo(f.x * s * .7, 0); x.quadraticCurveTo(f.x * s * .85, -f.hh * s * .5 * budK, f.x * s, -f.hh * s * budK); }
+  x.stroke();
+  for (const f of p.fl) {
+    const a = f.a, [u, v] = basis(a), L = 1.6 * s * f.k * (.4 + .6 * budK), th = lerp(1.25, .04, openK), it = [];
+    let lo = 0, ly = -9;
+    for (let i = 0; i < 4; i++) { const d = ring(u, v, f.r0 + i * 1.5708); if (d[1] > ly) { ly = d[1]; lo = i; } }
+    for (let i = 0; i < 4; i++) {
+      const pt = petal(a, ring(u, v, f.r0 + i * 1.5708), { r0: .1 * s, L: L * (i === lo ? .72 : 1), w: L * .42, th, curl: .1, cup: .15, prof: PROF.round });
+      it.push({ z: pt.z, pt, C: i === lo ? VERL : VERC });
+    }
+    x.save(); x.translate(f.x * s, -f.hh * s * budK);
+    drawItems(x, it, p.hz, s < 1.4 ? 0 : .16 * s);
+    if (openK > .3) dots(x, [vmul(a, .05 * L)], .26 * L, css(mixc(hex('#f5f8fc'), HAZE, p.hz)));
+    x.restore();
+  }
+}
+// 蜂斗菜芽（ふきのとう）：雪一化最先冒出来的那颗淡绿色小球
+function baseFuki(x, p, g) {
+  const e = sm(0, .55, g), o = sm(.4, 1, g); if (e <= 0) return;
+  const s = p.s, a = axis(p.phi, p.psi), [u, v] = basis(a), it = [];
+  x.save(); x.translate(0, -.3 * s * e);
+  for (let i = 0; i < 5; i++) {
+    let pt = petal(a, ring(u, v, p.r0 + i * 1.2566), { r0: .4 * s * e, h0: -.2 * s, L: 3.6 * s * e, w: 1.15 * s * e, th: lerp(1.42, .8, o), curl: .4, cup: .5, prof: PROF.bract });
+    it.push({ z: pt.z, pt, C: FUKO });
+    pt = petal(a, ring(u, v, p.r0 + .63 + i * 1.2566), { r0: .25 * s * e, L: 2.5 * s * e, w: .85 * s * e, th: lerp(1.5, 1.08, o), curl: .3, cup: .5, prof: PROF.bract });
+    it.push({ z: pt.z, pt, C: FUKI });
+  }
+  if (o > .25) it.push({ z: a[2] * 1.5 * s * e + .02, fn: () => {
+    const pts = [];
+    for (let i = 0; i < 11; i++) pts.push(vadd(vmul(a, (1.55 + .25 * ((i * .618) % 1)) * s * e), vmul(ring(u, v, i * 2.39996), .85 * s * e * Math.sqrt((i + .5) / 11))));
+    dots(x, pts, .36 * s * o, css(mixc(hex('#ece5b2'), HAZE, p.hz)));
+  } });
+  drawItems(x, it, p.hz, .2 * s);
+  x.restore();
+}
+const HEAD = { hep: headHep, drop: headDrop, cro: headCro };
+const BASE = { hep: baseHep, drop: baseDrop, cro: baseCro, ver: baseVer, fuki: baseFuki };
+
+// 缓存图：在一块共用的 CPU 画布上画好，冻成 ImageBitmap。位图只上传一次 GPU，之后每帧直接用；
+// 要是每株用一块 <canvas>，改一张就得刷一次 GPU 或者每帧重新上传，集显扛不住。
+const SCR = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(8, 8) : null;
+const SX = SCR && SCR.getContext('2d', { willReadFrequently: true });
+const CAN_BM = !!(SX && SCR.transferToImageBitmap);
+function bake(p, key, w, h, ax, ay, fn, g) {
+  const cw = Math.ceil(w * DPR), ch = Math.ceil(h * DPR);
+  let c, x;
+  if (CAN_BM) { c = SCR; c.width = cw; c.height = ch; x = SX; }
+  else { c = (p[key] && p[key].img) || mk(cw, ch); x = c.getContext('2d'); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, cw, ch); }
+  x.setTransform(DPR, 0, 0, DPR, ax * DPR, ay * DPR); x.lineCap = 'round'; x.lineJoin = 'round';
+  fn(x, p, g);
+  const old = p[key];
+  if (CAN_BM) { if (old) old.img.close(); p[key] = { img: SCR.transferToImageBitmap(), w, h, ax, ay }; }
+  else p[key] = { img: c, w, h, ax, ay };
+}
+
+function seedFlora() {
+  fw = []; gs = [];
+  const kW = W / 1440, sk = L.shark, s0 = sk.x - 70 * sk.k, s1 = sk.x + 66 * sk.k;
+  const zr = () => Math.pow(Math.random(), 1.25);           // 远处的地在屏幕上更挤，种得更密
+  const put = (o, x, z) => {
+    if (x < 3 || x > W - 3) return null;
+    z = clamp(z, 0, 1);
+    const g0 = gy[x | 0];
+    Object.assign(o, { x, z, y: g0 + 2 + z * (H - 3 - g0), s: .78 + 1.05 * z, hz: (1 - z) * .42, d: Math.random(), ph: Math.random() * 6.3, wt: 9, q: -1, lean: 0, flex: 1 });
+    o.g = o.y - 2 > lineY ? 1 : 0;
+    return o;
+  };
+  const clump = (n, m0, m1, spread, make) => {
+    for (let i = 0; i < n; i++) {
+      const cx = rnd(0, W), cz = zr(), m = m0 + (Math.random() * (m1 - m0 + 1) | 0), sh = {};
+      for (let j = 0; j < m; j++) {
+        const z = clamp(cz + rnd(-.05, .05), 0, 1), x = cx + rnd(-spread, spread) * (.78 + 1.05 * z);
+        if (z < .35 && x > s0 && x < s1) continue;          // 别挡住鲨鲨
+        const p = put({}, x, z); if (p) { make(p, j, sh); fw.push(p); }
+      }
+    }
+  };
+  // 雪割草：一丛一个颜色
+  clump(Math.round(24 * kW + 4), 3, 7, 15, (p, j, sh) => {
+    if (sh.col === undefined) sh.col = Math.random() < .4 ? 0 : Math.random() < .5 ? 1 : 2;
+    const s = p.s;
+    Object.assign(p, { kind: 'hep', col: sh.col, h: rnd(6, 11) * s, pl: rnd(3.6, 4.5) * s, n: 6 + (Math.random() * 3 | 0), phi: rnd(.55, 1.25), psi: rnd(-.9, .9), r0: Math.random() * 6.3, lean: rnd(-.16, .16), sw: .45 * s, stc: css(mixc(hex('#857a7c'), HAZE, p.hz)) });
+    p.jt = []; p.lj = []; p.tj = [];
+    for (let i = 0; i < p.n; i++) { p.jt.push(rnd(-.12, .12)); p.lj.push(rnd(.86, 1.06)); p.tj.push(rnd(-.06, .14)); }
+    p.lv = [];
+    if (j < 2) for (let i = 0, m = 1 + (Math.random() * 2 | 0); i < m; i++) p.lv.push({ a: Math.random() * 6.3, len: rnd(2, 3.4), r: rnd(2.1, 2.9), sq: rnd(.42, .6) });
+    p.hw = 2 * (p.pl * 1.42 + s + 1);
+    Object.assign(p, { bw: 20 * s, bh: 13 * s, bax: 10 * s, bay: 7 * s });
+  });
+  // 雪滴花
+  clump(Math.round(10 * kW + 2), 3, 7, 12, p => {
+    const s = p.s;
+    Object.assign(p, { kind: 'drop', h: rnd(13, 21) * s, pl: rnd(4, 5) * s, side: Math.random() < .5 ? -1 : 1, psi: rnd(-1, 1), r0: Math.random() * 6.3, lean: rnd(-.1, .1), flex: 1.2, sw: .5 * s, stc: css(mixc(hex('#7c9a8a'), HAZE, p.hz)) });
+    p.lv = [{ dx: rnd(-1.2, -.2), hk: rnd(.5, .8), bend: rnd(-.4, -.05) }, { dx: rnd(.2, 1.2), hk: rnd(.5, .8), bend: rnd(.05, .4) }];
+    p.hw = 2 * (p.pl * 1.25 + 1.6 * s + 1);
+    Object.assign(p, { bw: p.h + 6 * s, bh: p.h * .85 + 4 * s, bax: p.h / 2 + 3 * s, bay: p.h * .85 + 2 * s });
+  });
+  // 番红花
+  clump(Math.round(11 * kW + 2), 2, 5, 10, (p, j, sh) => {
+    if (sh.col === undefined) sh.col = Math.random() < .6 ? 0 : 1;
+    const s = p.s;
+    Object.assign(p, { kind: 'cro', col: sh.col, h: rnd(1.2, 3) * s, pl: rnd(4.6, 5.6) * s, phi: rnd(.08, .45), psi: rnd(-1, 1), tho: rnd(.86, 1.1), r0: Math.random() * 6.3, lean: rnd(-.05, .05), flex: .35, sw: .8 * s, stc: css(mixc(hex('#b9c2b1'), HAZE, p.hz)) });
+    const lh = p.h + p.pl;
+    p.lv = []; for (let i = 0, m = 3 + (Math.random() * 2 | 0); i < m; i++) p.lv.push({ dx: rnd(-1.4, 1.4), hk: rnd(.9, 1.35), bend: rnd(-.35, .35) });
+    p.hw = 2 * (p.pl * 1.2 + s + 1);
+    Object.assign(p, { bw: lh * 1.2 + 6 * s, bh: lh * 1.4 + 4 * s, bax: lh * .6 + 3 * s, bay: lh * 1.4 + 2 * s });
+  });
+  // 阿拉伯婆婆纳：太小，主要种在近处
+  for (let i = 0, n = Math.round(W / 22); i < n; i++) {
+    const p = put({ kind: 'ver' }, rnd(0, W), 1 - Math.pow(Math.random(), 1.5) * .92); if (!p) continue;
+    p.lv = []; for (let j = 0, m = 6 + (Math.random() * 5 | 0); j < m; j++) p.lv.push({ x: rnd(-8, 8), y: rnd(-1.6, 1.2), r: rnd(1.1, 1.7), rot: rnd(-.6, .6) });
+    p.fl = []; for (let j = 0, m = 2 + (Math.random() * 4 | 0); j < m; j++) p.fl.push({ x: rnd(-7, 7), hh: rnd(2, 4.2), a: vnorm([rnd(-.45, .45), -rnd(.3, .75), 1]), r0: Math.random() * 6.3, k: rnd(.85, 1.1) });
+    const s = p.s; Object.assign(p, { bw: 24 * s, bh: 12 * s, bax: 12 * s, bay: 8 * s });
+    fw.push(p);
+  }
+  // 蜂斗菜芽：雪一化最先出来
+  for (let i = 0, n = Math.max(3, Math.round(6 * kW)); i < n; i++) {
+    const z = zr(), x = rnd(0, W); if (z < .35 && x > s0 && x < s1) continue;
+    const p = put({ kind: 'fuki', phi: rnd(.12, .4), psi: rnd(-1, 1), r0: Math.random() * 6.3 }, x, z); if (!p) continue;
+    p.d *= .3; const s = p.s; Object.assign(p, { bw: 14 * s, bh: 12 * s, bax: 7 * s, bay: 9 * s });
+    fw.push(p);
+  }
+  // 草丛
+  for (let i = 0, n = Math.round(W / 2.6); i < n; i++) {
+    const t = put({}, rnd(0, W), zr()); if (!t) continue;
+    t.d *= .4; t.bl = [];
+    for (let j = 0, m = 4 + (Math.random() * 5 | 0); j < m; j++) t.bl.push({ a: rnd(-.6, .6), h: rnd(3, 9.5) * t.s, w: rnd(.35, .65) * t.s, ox: rnd(-2, 2) * t.s, l: Math.random() < .4 ? 1 : 0 });
+    gs.push(t);
+  }
+  fw.sort((a, b) => a.y - b.y); gs.sort((a, b) => a.y - b.y);
+  BF = []; BG = []; GBC = [];
+  for (let b = 0; b < NB; b++) {
+    BF.push([]); BG.push([]);
+    const hz = .46 * (1 - (b + .5) / NB) + .06;
+    GBC.push([css(mixc(G_DK, HAZE, hz)), css(mixc(G_LT, HAZE, hz))]);
+  }
+  const band = o => Math.min(NB - 1, (o.z * NB) | 0);
+  for (const p of fw) BF[band(p)].push(p);
+  for (const t of gs) BG[band(t)].push(t);
+}
+function grow(p, dt, ly) {
+  if (p.y - 2 > ly) { p.wt += dt; if (p.wt > p.d * 1.6) p.g = Math.min(1, p.g + dt / (1.5 + p.d * 2)); }
+  else { p.wt = 0; p.g = Math.max(0, p.g - dt / (.7 + p.d * .6)); }
+}
+
+// ── 粒子 ──
+function newFlake(f, anyY) {
+  f = f || {};
+  f.far = Math.random() < .36;
+  f.r = f.far ? rnd(.5, 1.25) : rnd(.9, 2.3);
+  f.x = Math.random() * W; f.y = anyY ? Math.random() * H : rnd(-24, -3);
+  f.vy = f.far ? 13 + f.r * 9 : 22 + f.r * 13;
+  f.ph = Math.random() * 6.3; f.fade = 0;
+  return f;
+}
+function spawnAll() {
+  const n = Math.round(clamp(W * H / 3600, 90, 420) * (RM ? .4 : 1));
+  fl = []; pe = []; dr = []; gl = [];
+  for (let i = 0; i < n; i++) {
+    const f = newFlake(null, true);
+    if (f.y > lineY) { // 线下预先放花瓣
+      if (Math.random() < .55) pe.push(newPetal(f.x, f.y, f.far, 0));
+      f.y = Math.random() * Math.max(0, lineY);
+    }
+    fl.push(f);
+  }
+}
+function newPetal(x, y, far, morph) {
+  const gz = Math.pow(Math.random(), 1.4);   // 落到草地上时停在多远的地方，越远越小
+  return {
+    x, y, far, m: morph, s: far ? rnd(2.6, 4.2) : rnd(4.6, 7.4) * (.72 + .42 * gz), ci: (Math.random() * PCOL.length) | 0, gz,
+    vy: far ? rnd(11, 17) : rnd(18, 28), rot: Math.random() * 6.3, spin: rnd(-2.2, 2.2),
+    fl: Math.random() * 6.3, fs: rnd(2, 4.5), ph: Math.random() * 6.3, st: 0, life: 0, a: 1,
+  };
+}
+function newDrop(x, y) { return { x: x + .5, y: y + .2, vy: rnd(0, 20), run: 0, dir: 0 }; }
+
+function restPetal(p, y, onGround) {
+  p.st = 1; p.y = y; p.life = onGround ? rnd(18, 40) : rnd(7, 16);
+  p.rot = (Math.random() < .5 ? -1 : 1) * rnd(1.25, 1.75) + rnd(-.3, .3); p.fl = rnd(-.9, .9);
+}
+
+function vdrop(slide) {
+  // 起点取随机高度：每一行字都像各自露天的窗台，不会被上一行完全挡住
+  let x = (Math.random() * W) | 0, y = (Math.random() * lineY) | 0;
+  if (g[y * W + x]) return;
+  while (y < H && !g[y * W + x]) y++;
+  y--;
+  if (y < 0 || y >= lineY) return;
+  for (let it = 0; it < 80; it++) {
+    const i = y * W + x;
+    const l = x > 0 && !g[i + W - 1], r = x < W - 1 && !g[i + W + 1];
+    if ((l || r) && Math.random() < slide) {
+      x += (l && r) ? (Math.random() < .5 ? -1 : 1) : (l ? -1 : 1); y++;
+      while (y + 1 < H && !g[(y + 1) * W + x]) y++;
+      if (y >= lineY) return;
+    } else break;
+  }
+  const i = y * W + x;
+  if (g[i] || y + 1 >= H) return;
+  if (depthOK(x, y)) addSnow(i);
+}
+function prewarm() {
+  for (let k = 0, n = W * 10; k < n; k++) vdrop(.5);
+  // 线下的字和地上先落一些花瓣
+  const np = Math.round(clamp(W / 14, 30, 110));
+  for (let k = 0; k < np; k++) {
+    const onText = Math.random() < .45;
+    if (!onText) {
+      const x = rnd(0, W), g0 = gy[x | 0], p = newPetal(x, 0, false, 0), y = g0 + 2 + p.gz * (H - 6 - g0);
+      if (y - 2 <= lineY) continue;
+      restPetal(p, y, true); p.gnd = 1; p.life *= Math.random(); pe.push(p);
+      continue;
+    }
+    const x = rnd(L.left, L.left + L.bw);
+    let y = Math.max(0, Math.ceil(lineY) + 2);
+    const xi = x | 0;
+    while (y < H - 1 && !g[(y + 1) * W + xi]) y++;
+    if (y >= H - 1) continue;
+    const p = newPetal(x, y, false, 0);
+    restPetal(p, y - p.s * .15, st[(y + 1) * W + xi] === 3);
+    p.life *= Math.random();
+    pe.push(p);
+  }
+}
+
+function placeIso() {
+  iso.style.top = lineY + 'px';
+  const v = Math.round(100 - lineY / H * 100);
+  iso.setAttribute('aria-valuenow', v);
+  iso.setAttribute('aria-valuetext', lineY < L.top ? '全是春天' : lineY > L.groundTop ? '全是冬天' : '一半冬天一半春天');
+}
+function setLine(y) { lineY = clamp(y, 24, H - 26); lineFrac = lineY / H; placeIso(); }
+
+// ── 更新 ──
+function update(dt) {
+  T += dt;
+  wind = 7 * Math.sin(T * .11) + 4 * Math.sin(T * .31 + 1.7) + 2.5;
+  // 温度线：鼠标在页面上时追着鼠标走（带一点弹簧的滞后），鼠标离开页面后慢慢回到两句签名中间
+  let goal = aim !== null ? aim : L.lineDefault;
+  if (nudge >= 0 && aim === null) {
+    nudge += dt;
+    const k = nudge / 1.6;
+    if (k >= 1) nudge = -2;
+    else goal = L.lineDefault - 16 * Math.sin(Math.PI * k) * (1 - k * .3);
+  }
+  goal = clamp(goal, 24, H - 26);
+  if (Math.abs(goal - lineY) > .05) setLine(lineY + (goal - lineY) * (1 - Math.exp(-dt * (aim !== null || nudge >= 0 ? 12 : 3.5))));
+  const ly = lineY;
+
+  // 雪花
+  for (const f of fl) {
+    if (f.fade) { f.fade -= dt * 3; if (f.fade <= 0) newFlake(f); continue; }
+    f.x += (wind * (f.far ? .55 : 1) + Math.sin(T * .9 + f.ph) * 5) * dt;
+    if (f.x < 0) f.x += W; else if (f.x >= W) f.x -= W;
+    const ny = f.y + f.vy * dt;
+    if (ny >= ly && (f.y < ly || f.y >= ly)) {
+      if (pe.length < 650 && Math.random() < .62) pe.push(newPetal(f.x, ly, f.far, 1));
+      newFlake(f); continue;
+    }
+    f.y = ny;
+    if (f.y > H + 4) { newFlake(f); continue; }
+    if (f.far || f.y < 0 || f.y >= ly - 1) continue;
+    const xi = f.x | 0, yi = f.y | 0, i = yi * W + xi;
+    if (g[i]) {
+      let y = yi - 1; while (y > yi - 6 && y >= 0 && g[y * W + xi]) y--;
+      if (y >= 0 && !g[y * W + xi] && depthOK(xi, y)) addSnow(y * W + xi);
+      f.fade = 1; continue;
+    }
+    if (yi + 1 < H && g[i + W]) {
+      const l = xi > 0 && !g[i + W - 1], r = xi < W - 1 && !g[i + W + 1];
+      if ((l || r) && Math.random() < .55) { f.x += (l && r) ? (Math.random() < .5 ? -1 : 1) : (l ? -1 : 1); f.y += 1; }
+      else {
+        if (depthOK(xi, yi)) {
+          addSnow(i);
+          if (f.r > 1.7) for (const dx of [-1, 1]) { const j = i + dx; if (!g[j] && g[j + W] && depthOK(xi + dx, yi)) addSnow(j); }
+        }
+        f.fade = .6;
+      }
+    }
+  }
+
+  // 看不见的细雪：让线上的积雪在十来秒里长起来
+  vacc += W * .3 * dt;
+  while (vacc >= 1) { vacc--; vdrop(.55); }
+
+  // 积雪：线下的融化，悬空的跟着掉
+  for (let k = cnt - 1; k >= 0; k--) {
+    if (k >= cnt) continue;
+    const i = list[k], y = (i / W) | 0;
+    if (y <= ly + 1 || (i >= W && g[i - W] === 2 && ((i - W) / W | 0) > ly + 1)) continue; // 从表面往下化
+    if (Math.random() < (2.2 + Math.min((y - ly) * .01, 1.5)) * dt) {
+      delSnow(i);
+      if (dr.length < 320 && Math.random() < .18) dr.push(newDrop(i % W, y));
+      const up = i - W;
+      if (up >= 0 && g[up] === 2 && ((up / W) | 0) <= ly + 1) { delSnow(up); if (dr.length < 280) dr.push(newDrop(up % W, y - 1)); }
+    }
+  }
+
+  // 雪面闪光
+  glintT -= dt;
+  if (glintT <= 0 && cnt) {
+    glintT = rnd(.06, .2);
+    const i = list[(Math.random() * cnt) | 0];
+    if (i >= W && g[i - W] !== 2 && st[i + W] !== 3) gl.push({ x: i % W + .5, y: ((i / W) | 0) + .5, t: 0 });
+  }
+  for (let k = gl.length - 1; k >= 0; k--) { const q = gl[k]; q.t += dt; if (q.t > .8 || g[(q.y | 0) * W + (q.x | 0)] !== 2) gl.splice(k, 1); }
+
+  // 花瓣
+  for (let k = pe.length - 1; k >= 0; k--) {
+    const p = pe[k];
+    if (p.m > 0) p.m = Math.max(0, p.m - dt * 2.6);
+    if (p.st === 0) {
+      p.fl += p.fs * dt; p.rot += p.spin * dt;
+      p.x += (wind * .8 + Math.sin(T * 1.1 + p.ph) * 15) * dt;
+      p.y += (p.vy + Math.sin(p.fl * 2) * 7) * dt;
+      if (p.x < -10) p.x += W + 20; else if (p.x > W + 10) p.x -= W + 20;
+      if (p.y < ly - 3) { p.st = 2; }
+      else if (!p.far) {
+        const xi = p.x | 0;
+        if (p.gl) { if (p.y >= p.gl) { restPetal(p, p.gl, true); p.gnd = 1; } }
+        else {
+          const yi = (p.y + p.s * .3) | 0;
+          if (xi >= 0 && xi < W && yi >= 0 && yi < H && g[yi * W + xi]) {
+            // 碰到地面不停在地平线上，接着往"里"落，散在整片草地上
+            if (st[yi * W + xi] === 3) { const g0 = gy[xi]; p.gl = Math.max(p.y, g0 + 2 + p.gz * (H - 6 - g0)); }
+            else restPetal(p, p.y, false);
+          }
+        }
+      }
+      if (p.y > H + 12) { pe.splice(k, 1); continue; }
+    } else if (p.st === 1) {
+      p.life -= dt;
+      const xi = clamp(p.x | 0, 0, W - 1), yi = (p.y + p.s * .3 + 1) | 0;
+      if (p.y < ly - 2 || p.life <= 0) p.st = 2;
+      else if (!p.gnd && yi < H && !g[yi * W + xi]) { p.st = 0; }
+    } else {
+      p.a -= dt / (p.y < ly ? .9 : 2.2);
+      if (p.a <= 0) { pe.splice(k, 1); continue; }
+    }
+  }
+  if (pe.length > 700) pe.splice(0, pe.length - 700);
+
+  // 融水
+  for (let k = dr.length - 1; k >= 0; k--) {
+    const d = dr[k];
+    const xi = d.x | 0;
+    if (xi < 0 || xi >= W) { dr.splice(k, 1); continue; }
+    if (!d.run) {
+      d.vy = Math.min(d.vy + 760 * dt, 380);
+      const ny = d.y + d.vy * dt; let hit = false;
+      while (d.y < ny) {
+        const yi = (d.y + 1) | 0;
+        if (yi >= H) { hit = true; break; }
+        if (g[yi * W + xi]) { hit = true; break; }
+        d.y = Math.min(ny, d.y + 1);
+      }
+      if (d.y > H) { dr.splice(k, 1); continue; }
+      if (hit) { d.run = rnd(.2, .55); d.dir = Math.random() < .5 ? -1 : 1; d.vy = 0; d.y = Math.floor(d.y) + .2; }
+    } else {
+      const yi = (d.y + 1) | 0;
+      if (yi < H && !g[yi * W + xi]) { d.run = 0; continue; }
+      const nx = d.x + d.dir * 26 * dt, ni = (d.y | 0) * W + (nx | 0);
+      if (nx < 0 || nx >= W || g[ni]) d.dir *= -1; else d.x = nx;
+      d.run -= dt;
+      if (d.run <= 0) {
+        if (yi < H && st[yi * W + xi] === 3) for (const f of fw) if (f.z < .15 && Math.abs(f.x - d.x) < 10) { f.wt += .3; f.g = Math.min(1, f.g + .02); }
+        dr.splice(k, 1);
+      }
+    }
+  }
+
+  // 花草：根在线下才长，各自慢半拍，所以拖上去时是一波一波开的
+  for (const f of fw) grow(f, dt, ly);
+  for (const t of gs) grow(t, dt, ly);
+}
+
+// ── 绘制 ──
+let flakeSpr = null;
+function sprite() {
+  const c = mk(32, 32), x = c.getContext('2d');
+  const gr = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.35, 'rgba(255,255,255,.85)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 32, 32); return c;
+}
+function clipDraw(a, b, y0, h) {
+  const y = clamp(lineY, y0, y0 + h);
+  if (y > y0) { ctx.save(); ctx.beginPath(); ctx.rect(0, y0, W, y - y0); ctx.clip(); ctx.drawImage(a, 0, y0, W, h); ctx.restore(); }
+  if (y < y0 + h) { ctx.save(); ctx.beginPath(); ctx.rect(0, y, W, y0 + h - y); ctx.clip(); ctx.drawImage(b, 0, y0, W, h); ctx.restore(); }
+}
+// 风一阵一阵从左往右扫过草地，草和花用同一个波
+const gust = x => { const v = Math.sin(x * .011 - T * 1.25) * .5 + .5; return v * v; };
+function grassBand(b) {
+  const list = BG[b], m = RM ? .3 : 1;
+  for (let pass = 0; pass < 2; pass++) {
+    ctx.beginPath(); let any = false;
+    for (const t of list) {
+      if (t.g < .02) continue;
+      const k = t.g * t.g * (3 - 2 * t.g);
+      const bend = (wind * .011 + gust(t.x) * .16 + Math.sin(T * 2.1 + t.ph) * .035) * m;
+      for (const bl of t.bl) {
+        if (bl.l !== pass) continue;
+        const h = bl.h * k, bx = t.x + bl.ox, ax = (Math.sin(bl.a) + bend) * h, ay = Math.cos(bl.a) * h * (1 - .25 * Math.abs(bend));
+        const cx = bx + ax * .35, cy = t.y - ay * .62;
+        ctx.moveTo(bx - bl.w, t.y + .5);
+        ctx.quadraticCurveTo(cx - bl.w * .4, cy, bx + ax, t.y - ay);
+        ctx.quadraticCurveTo(cx + bl.w * .4, cy, bx + bl.w, t.y + .5);
+        any = true;
+      }
+    }
+    if (any) { ctx.fillStyle = GBC[b][pass]; ctx.fill(); }
+  }
+}
+function drawPlant(p) {
+  if (p.g < .012) return;
+  const q = Math.round(p.g * SQ);
+  if (q !== p.q && (p.q < 0 || sprBudget-- > 0)) {   // 开合时每帧只重画有限几株，其余下一帧轮到
+    p.q = q; const gq = q / SQ;
+    bake(p, 'bs', p.bw, p.bh, p.bax, p.bay, BASE[p.kind], gq);
+    if (p.hw) bake(p, 'hs', p.hw, p.hw, p.hw / 2, p.hw / 2, HEAD[p.kind], gq);
+  }
+  const bs = p.bs; ctx.drawImage(bs.img, p.x - bs.ax, p.y - bs.ay, bs.w, bs.h);
+  if (!p.hw) return;
+  const s = p.s, h = p.h * sm(0, .45, p.g);
+  const sw = RM ? 0 : (wind * .009 + Math.sin(T * 1.5 + p.ph + p.x * .013) * .06 + gust(p.x) * .07) * p.flex;
+  const tx = p.x + (Math.sin(sw) + p.lean) * h, ty = p.y - Math.cos(sw) * h;
+  ctx.strokeStyle = p.stc; ctx.lineWidth = p.sw;
+  ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.quadraticCurveTo(p.x + p.lean * h * .2, p.y - h * .6, tx, ty);
+  let hx = tx, hy = ty, rot = sw * 1.3;
+  if (p.kind === 'drop') {   // 花梗从茎顶弯下来，铃铛像钟摆一样晃
+    const k = sm(.15, .6, p.g);
+    hx = tx + p.side * 2.3 * s * k; hy = ty + 1.2 * s * k;
+    ctx.quadraticCurveTo(tx + p.side * 1.7 * s * k, ty - 1.7 * s * k, hx, hy);
+    rot = sw * 2.4;
+  }
+  ctx.stroke();
+  const hs = p.hs, c = Math.cos(rot), si = Math.sin(rot);
+  ctx.setTransform(DPR * c, DPR * si, -DPR * si, DPR * c, hx * DPR, hy * DPR);
+  ctx.drawImage(hs.img, -hs.ax, -hs.ay, hs.w, hs.h);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+function drawMeadow() {
+  sprBudget = 12;
+  ctx.lineCap = 'round';
+  // 落在草地上的花瓣按远近分到各层，压在同层的草下面
+  const PB = BF.map(() => []);
+  for (const p of pe) if (p.gnd && !p.far) { const g0 = gy[clamp(p.x | 0, 0, W - 1)]; PB[clamp(((p.y - g0 - 2) / (H - 8 - g0) * NB) | 0, 0, NB - 1)].push(p); }
+  for (let b = 0; b < NB; b++) {
+    for (const p of PB[b]) drawPetal(p);
+    grassBand(b);
+    for (const p of BF[b]) drawPlant(p);
+  }
+}
+
+function petalSprites() {
+  // 飘落的樱花瓣：花托那头深、瓣尖浅，中间一道淡脉
+  PSPR = PCOL.map(pair => pair.map((h, side) => {
+    const c = mk(48, 48), x = c.getContext('2d'), col = hex(h);
+    x.translate(24, 24); x.scale(40, 40);
+    const gr = x.createLinearGradient(0, .55, 0, -.5);
+    gr.addColorStop(0, css(mulc(col, side ? .9 : .93))); gr.addColorStop(.55, css(col)); gr.addColorStop(1, css(mixc(col, [255, 255, 255], .4)));
+    x.fillStyle = gr; x.fill(PETAL);
+    x.strokeStyle = css(mulc(col, .86), .4); x.lineWidth = .024;
+    x.beginPath(); x.moveTo(0, .48); x.quadraticCurveTo(.025, .12, 0, -.18); x.stroke();
+    return c;
+  }));
+}
+function blossom(s) {
+  // 行尾 ❄ 过线后变成的那朵樱花
+  const R = 8 * s, c = mk(Math.ceil(2 * R * DPR), Math.ceil(2 * R * DPR)), x = c.getContext('2d');
+  x.setTransform(DPR, 0, 0, DPR, R * DPR, R * DPR); x.rotate(.3);
+  for (let i = 0; i < 5; i++) {
+    x.save(); x.rotate(i * 1.2566); x.translate(0, -3.3 * s); x.scale(5.6 * s, 5.6 * s);
+    const gr = x.createLinearGradient(0, .55, 0, -.5);
+    gr.addColorStop(0, '#e2839e'); gr.addColorStop(.5, '#f2aabd'); gr.addColorStop(1, '#fcdbe3');
+    x.fillStyle = gr; x.fill(PETAL);
+    x.strokeStyle = 'rgba(205,110,138,.35)'; x.lineWidth = .03; x.stroke(PETAL);
+    x.restore();
+  }
+  x.strokeStyle = 'rgba(196,92,124,.7)'; x.lineWidth = .32 * s; x.lineCap = 'round';
+  x.beginPath();
+  const tips = [];
+  for (let i = 0; i < 11; i++) { const a = i * .5712 + .2, r = (1.7 + (i % 3) * .35) * s; x.moveTo(0, 0); x.lineTo(Math.cos(a) * r, Math.sin(a) * r); tips.push([Math.cos(a) * r, Math.sin(a) * r]); }
+  x.stroke();
+  dots(x, tips, .38 * s, '#f6d27a');
+  dots(x, [[0, 0]], .8 * s, '#f9e7b0');
+  c.R = R; return c;
+}
+function drawPetal(p) {
+  const fx = Math.cos(p.fl), s = p.s * (1 - p.m * .7);
+  const sx = s * (Math.abs(fx) * .85 + .15) * (fx < 0 ? -1 : 1), cr = Math.cos(p.rot), sr = Math.sin(p.rot);
+  ctx.globalAlpha = p.a * (p.far ? .62 : 1) * (1 - p.m * .8);
+  ctx.setTransform(DPR * cr * sx, DPR * sr * sx, -DPR * sr * s, DPR * cr * s, DPR * p.x, DPR * p.y);
+  ctx.drawImage(PSPR[p.ci][fx < 0 ? 1 : 0], -.6, -.6, 1.2, 1.2);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (p.m > 0) {
+    ctx.globalAlpha = p.m * .9;
+    const r = (p.far ? 1.2 : 2.2) * (.6 + p.m * .6);
+    ctx.drawImage(flakeSpr, p.x - r * 1.6, p.y - r * 1.6, r * 3.2, r * 3.2);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawFlakeIcon() {
+  const f = L.flk; if (!f) return;
+  const k = clamp((f.y - lineY) / 10 + .5, 0, 1);
+  const s = f.s;
+  ctx.save(); ctx.translate(f.x, f.y);
+  if (k < 1) {
+    ctx.globalAlpha = 1 - k; ctx.rotate(T * .25);
+    ctx.strokeStyle = `rgba(${INK_C},.85)`; ctx.lineWidth = 1.1 * s; ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3, c = Math.cos(a), si = Math.sin(a), R = 6 * s;
+      ctx.moveTo(0, 0); ctx.lineTo(c * R, si * R);
+      const bx = c * R * .58, by = si * R * .58, b = 2.1 * s;
+      ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(a + .75) * b, by + Math.sin(a + .75) * b);
+      ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(a - .75) * b, by + Math.sin(a - .75) * b);
+    }
+    ctx.stroke();
+    ctx.rotate(-T * .25);
+  }
+  if (k > 0) {
+    const R = bloomSpr.R, sc = .82 + .18 * k;
+    ctx.globalAlpha = k; ctx.scale(sc, sc);
+    ctx.drawImage(bloomSpr, -R, -R, 2 * R, 2 * R);
+  }
+  ctx.restore(); ctx.globalAlpha = 1;
+}
+function drawIso() {
+  const y = Math.round(lineY) + .5, on = aim !== null || foc;
+  const lx = L.labelX, s = Math.min(1, L.s + .1);
+  ctx.fillStyle = `rgba(255,255,255,${on ? .98 : .82})`;
+  const r = on ? 1 : .8;
+  for (let x = 3.5; x < W; x += 7) {
+    if (x > lx - 9 && x < lx + 36) continue;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  }
+  ctx.font = `500 ${11 * s}px ${F_MO}`; ctx.textBaseline = 'middle';
+  ctx.fillText('0 °C', lx, y + .5);
+  ctx.font = `400 ${9.5 * s}px ${F_MO}`;
+  ctx.fillStyle = `rgba(${INK_C},${on ? .62 : .42})`; ctx.fillText('T < 0 °C', lx, y - 15);
+  ctx.fillStyle = `rgba(${INK_W},${on ? .62 : .42})`; ctx.fillText('T > 0 °C', lx, y + 16);
+  ctx.textBaseline = 'alphabetic';
+}
+
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  const ly = clamp(lineY / H, 0, 1);
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#746d96');
+  bg.addColorStop(Math.max(0, ly - .1), '#a49bb9');
+  bg.addColorStop(Math.min(1, ly + .07), '#c3a8c0');
+  bg.addColorStop(1, '#dbc5d2');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+  // 远处的雪和花瓣
+  for (const f of fl) if (f.far) { ctx.globalAlpha = .5; const r = f.r; ctx.drawImage(flakeSpr, f.x - r * 1.6, f.y - r * 1.6, r * 3.2, r * 3.2); }
+  ctx.globalAlpha = 1;
+  for (const p of pe) if (p.far) drawPetal(p);
+
+  clipDraw(mC, mW, Y0, H - Y0);
+  clipDraw(gC, gW, Y0, H - Y0);
+  drawShark(ctx);
+  drawMeadow();
+  clipDraw(tC, tW, TY0, TY1 - TY0);
+  if (hoverLk) {
+    const l = hoverLk, y = l.base + 3 * L.s;
+    ctx.fillStyle = `rgba(${lineY > y ? INK_C : INK_W},.55)`; ctx.fillRect(l.x0, y, l.x1 - l.x0, 1);
+  }
+  // 头像
+  const a = L.av;
+  if (av.complete && av.naturalWidth) {
+    ctx.save(); ctx.beginPath(); ctx.arc(a.x, a.y, a.r, 0, 7); ctx.clip();
+    ctx.drawImage(av, a.x - a.r, a.y - a.r, a.r * 2, a.r * 2); ctx.restore();
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(a.x, a.y, a.r + 1, 0, 7); ctx.stroke();
+  drawFlakeIcon();
+
+  // 积雪层
+  if (dirt[2] >= dirt[0]) {
+    sx.putImageData(simg, 0, 0, dirt[0], dirt[1], dirt[2] - dirt[0] + 1, dirt[3] - dirt[1] + 1);
+    dirt[0] = W; dirt[1] = H; dirt[2] = -1; dirt[3] = -1;
+  }
+  ctx.globalAlpha = .55;
+  ctx.drawImage(sc, -.5, 0, W, H); ctx.drawImage(sc, .5, 0, W, H); ctx.drawImage(sc, 0, -.6, W, H);
+  ctx.globalAlpha = 1;
+  ctx.drawImage(sc, 0, 0, W, H);
+  // 闪光
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = .6;
+  for (const q of gl) {
+    const k = Math.sin(Math.PI * q.t / .8), r = 2.6 * k;
+    ctx.globalAlpha = k;
+    ctx.beginPath(); ctx.moveTo(q.x - r, q.y - .5); ctx.lineTo(q.x + r, q.y - .5); ctx.moveTo(q.x, q.y - .5 - r); ctx.lineTo(q.x, q.y - .5 + r); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // 融水
+  ctx.fillStyle = 'rgba(236,243,255,.9)';
+  for (const d of dr) {
+    const h = 1.3 + Math.min(d.vy * .012, 3.2);
+    ctx.beginPath(); ctx.ellipse(d.x, d.y - h * .5, .85, h, 0, 0, 7); ctx.fill();
+  }
+  for (const p of pe) if (!p.far && !p.gnd) drawPetal(p);
+  for (const f of fl) if (!f.far) { ctx.globalAlpha = f.fade ? .9 * f.fade : .92; const r = f.r; ctx.drawImage(flakeSpr, f.x - r * 1.6, f.y - r * 1.6, r * 3.2, r * 3.2); }
+  ctx.globalAlpha = 1;
+  drawIso();
+}
+
+// ── 交互 ──
+// 温度线跟着鼠标走，不用按住；手机上手指在屏幕任何地方按住滑动都行，松手后线停在那里
+// 指到链接上时线停在那一行上面一点，不压着要点的字
+const follow = e => { if (!e.isPrimary) return; touched = true; nudge = -2; aim = hoverLk ? hoverLk.y0 - 9 * L.s : e.clientY; };
+addEventListener('pointermove', follow);
+addEventListener('pointerdown', follow);
+// 鼠标移出窗口：线慢慢回到「なにになる？」和「春になる。」中间
+document.addEventListener('mouseout', e => { if (!e.relatedTarget) aim = null; });
+iso.addEventListener('focus', () => foc = true);
+iso.addEventListener('blur', () => foc = false);
+iso.addEventListener('keydown', e => {
+  const dy = { ArrowUp: -12, ArrowDown: 12, PageUp: -80, PageDown: 80, Home: -1e5, End: 1e5 }[e.key];
+  if (dy) { touched = true; nudge = -2; aim = clamp((aim === null ? lineY : aim) + dy, 24, H - 26); e.preventDefault(); }
+});
+
+let rt = 0;
+addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(build, 160); });
+
+flakeSpr = sprite();
+petalSprites();
+build();
+if (!RM) setTimeout(() => { if (!touched) nudge = 0; }, 1800);
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+// 先跑两秒让画面落定
+for (let i = 0; i < 90; i++) update(1 / 45);
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
