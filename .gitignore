@@ -2,6 +2,7 @@
 # 其余的（另外两版样稿、三版目录页、截图、X 主页截图等素材）只留在本地。
 /*
 !/.gitignore
+!/README.md
 !/index.html
 !/build.py
 !/src/
