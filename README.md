@@ -20,11 +20,12 @@
 python3 build.py
 ```
 
-## 部署（Cloudflare Pages）
+## 部署（Cloudflare Workers）
 
-- 框架预设：无
 - 构建命令：`python3 build.py && mkdir -p dist && cp index.html dist/`
-- 构建输出目录：`dist`
+- 部署命令：`npx wrangler deploy`（按 `wrangler.jsonc` 把 `dist/` 当静态网站发上去）
+
+推到 `main` 会自动重新部署。
 
 ## 找我
 
